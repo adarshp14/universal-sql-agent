@@ -32,6 +32,7 @@ ENV/
 *.sqlite
 *.sqlite3
 database/sample.db
+database/profiles/
 
 # IDE specific files
 .idea/
