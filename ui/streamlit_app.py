@@ -47,6 +47,19 @@ from database.db_setup import setup_sample_database, get_db_engine
 from sqlalchemy import inspect, MetaData, Table
 from sql_agent import AgentPipeline
 
+# Global pipeline variable
+pipeline = None
+
+# Function to reset pipeline when database connection changes
+def reset_pipeline_on_db_change():
+    # Clear pipeline and force refresh on next use
+    global pipeline
+    print(f"[Reset Pipeline] Resetting pipeline. Current global pipeline: {pipeline}") # DEBUG LOG
+    pipeline = None
+    if 'cached_schema' in st.session_state:
+        st.session_state.cached_schema = None
+    print("[Reset Pipeline] Pipeline and cached schema reset.") # DEBUG LOG
+
 # Function to detect tables in a database using DynamicSchemaParser
 def detect_database_tables(engine, force_refresh=False, analyze_data=True):
     """Detect all tables in the connected database and return their structure using DynamicSchemaParser.
@@ -317,8 +330,12 @@ if 'current_db_connection' not in st.session_state:
 
 # We're not using schema status tracking anymore - removing all schema status messages from the UI
 
-# Initialize db_engine to None at the beginning
-db_engine = None
+# Initialize db_engine from session state or set to None
+if 'db_engine' not in st.session_state:
+    st.session_state.db_engine = None
+
+# Use the database engine from session state
+db_engine = st.session_state.db_engine
 
 st.title("Universal SQL Conversational Agent")
 st.markdown("""
@@ -364,10 +381,19 @@ if db_option == "Use sample SQLite database":
         st.session_state.force_regenerate_questions = True
         print("Database connection changed, will regenerate questions")
     
+    # Clear any existing connection first
+    if 'db_engine' in st.session_state:
+        st.session_state.db_engine = None
+    
     # Set up the sample database if it doesn't exist
     setup_sample_database(db_path)
     db_engine = get_db_engine(db_path)
+    print(f"[Connect Sample DB] Setting session state db_engine: {db_engine}") # DEBUG LOG
+    st.session_state.db_engine = db_engine
     st.session_state.current_db_connection = db_path
+    
+    # Reset the pipeline to use the new connection
+    reset_pipeline_on_db_change()
     
     status_manager.connection_success("SQLite", "Sample Database")
     
@@ -406,7 +432,17 @@ elif db_option == "Saved Profiles":
             if st.button("Connect", key="connect_profile"):
                 success, message, engine = profile_manager.connect_to_profile(selected_profile)
                 if success:
+                    # Clear any existing connection first
+                    if 'db_engine' in st.session_state:
+                        st.session_state.db_engine = None
+                    
+                    # Set the new database engine
                     db_engine = engine
+                    st.session_state.db_engine = db_engine
+                    print(f"[Connect Profile] Setting session state db_engine: {db_engine} for profile {selected_profile}") # DEBUG LOG
+                    
+                    # Reset the pipeline to use the new connection
+                    reset_pipeline_on_db_change()
                     
                     # Track database connection changes
                     db_connection_changed = False
@@ -473,6 +509,7 @@ elif db_option == "Connect to custom database":
             with open(db_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             db_engine = get_db_engine(db_path)
+            st.session_state.db_engine = db_engine
             st.sidebar.success(f"Database uploaded successfully: {uploaded_file.name}")
             
             # Detect tables in the uploaded database - don't show schema status message here
@@ -497,6 +534,7 @@ elif db_option == "Connect to custom database":
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "sample.db")
             setup_sample_database(db_path)
             db_engine = get_db_engine(db_path)
+            st.session_state.db_engine = db_engine
     else:
         # For other database types
         with st.sidebar.form(key=f"{db_type.lower()}_connection_form"):
@@ -565,9 +603,18 @@ elif db_option == "Connect to custom database":
                     encoded_sid = urllib.parse.quote_plus(sid)
                     connection_string = f"oracle+cx_oracle://{encoded_username}:{encoded_password}@{host}:{port}/?service_name={encoded_sid}"
                 
+                # Clear any existing connection first
+                if 'db_engine' in st.session_state:
+                    st.session_state.db_engine = None
+                
                 # Create engine
                 from sqlalchemy import create_engine
                 db_engine = create_engine(connection_string)
+                print(f"[Connect Custom DB] Setting session state db_engine: {db_engine}") # DEBUG LOG
+                st.session_state.db_engine = db_engine
+                
+                # Reset the pipeline to use the new connection
+                reset_pipeline_on_db_change()
                 
                 # Test connection
                 with db_engine.connect() as conn:
@@ -601,13 +648,15 @@ elif db_option == "Connect to custom database":
                             st.sidebar.markdown(f"- {table}")
             except Exception as e:
                 st.sidebar.error(f"Connection failed: {str(e)}")
-                db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "sample.db")
-                setup_sample_database(db_path)
-                db_engine = get_db_engine(db_path)
+                # Don't automatically fall back to sample database
+                st.error("Please check your database connection settings and try again.")
+                db_engine = None
+                st.session_state.db_engine = None
         else:
-            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "sample.db")
-            setup_sample_database(db_path)
-            db_engine = get_db_engine(db_path)
+            # Only use the sample database if the user explicitly selected it
+            st.error("Please enter valid database credentials and click Connect.")
+            db_engine = None
+            st.session_state.db_engine = None
 elif db_option == "Connect via URL":
     # Connection via URL
     connection_url = st.sidebar.text_input("Connection URL", placeholder="dialect+driver://username:password@host:port/database")
@@ -620,8 +669,17 @@ elif db_option == "Connect via URL":
     if st.sidebar.button("Connect via URL"):
         if connection_url:
             try:
+                # Clear any existing connection first
+                if 'db_engine' in st.session_state:
+                    st.session_state.db_engine = None
+                
                 from sqlalchemy import create_engine
                 db_engine = create_engine(connection_url)
+                st.session_state.db_engine = db_engine
+                print(f"[Connect URL] Setting session state db_engine: {db_engine}") # DEBUG LOG
+                
+                # Reset the pipeline to use the new connection
+                reset_pipeline_on_db_change()
                 
                 # Test connection
                 with db_engine.connect() as conn:
@@ -655,13 +713,15 @@ elif db_option == "Connect via URL":
                     st.sidebar.success(f"Connected to database with {len(tables)} tables")
             except Exception as e:
                 st.sidebar.error(f"Connection failed: {str(e)}")
-                db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "sample.db")
-                setup_sample_database(db_path)
-                db_engine = get_db_engine(db_path)
+                # Don't automatically fall back to sample database
+                st.error("Please check your database connection settings and try again.")
+                db_engine = None
+                st.session_state.db_engine = None
     else:
-        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "sample.db")
-        setup_sample_database(db_path)
-        db_engine = get_db_engine(db_path)
+        # Only use the sample database if the user explicitly selected it
+        st.error("Please enter a valid database URL and click Connect.")
+        db_engine = None
+        st.session_state.db_engine = None
 
 # Automatic schema detection - no UI elements needed for schema configuration
 # The schema will be automatically detected from the connected database
@@ -696,6 +756,12 @@ if db_engine:
         st.session_state.tables = tables
     except Exception as e:
         status_manager.schema_failure(str(e))
+else:
+    # If no database engine is available, show a warning
+    st.warning("No database connection established. Please connect to a database first.")
+    # Clear any existing schema info
+    st.session_state.schema_info = {}
+    st.session_state.tables = []
 
 # Create the agent pipeline
 class AgentPipeline:
@@ -729,10 +795,9 @@ class AgentPipeline:
         
         return current_data
 
-@st.cache_resource
 def get_pipeline(_db_engine, force_refresh=False, analyze_data=True):
     """
-    Create and cache the agent pipeline with dynamic schema detection.
+    Create the agent pipeline with dynamic schema detection.
     Uses cached schema information when available for better performance.
     
     Args:
@@ -895,7 +960,21 @@ force_refresh_needed = (
     db_connection_changed if 'db_connection_changed' in locals() else False
 )
 print(f"Pipeline initialization - Force refresh: {force_refresh_needed}")
-pipeline = get_pipeline(db_engine, force_refresh=force_refresh_needed, analyze_data=deep_analysis if 'deep_analysis' in locals() else True)
+# Only initialize the pipeline if we have a valid database engine
+if db_engine:
+    # Update the current database connection identifier for change detection
+    # Use a unique identifier based on the database connection details
+    if hasattr(db_engine, 'url'):
+        st.session_state.current_db_connection = str(db_engine.url)
+    else:
+        st.session_state.current_db_connection = str(id(db_engine))
+    
+    print(f"[Pipeline Initialization] Initializing pipeline with DB Engine: {db_engine}") # DEBUG LOG
+    pipeline = get_pipeline(db_engine, force_refresh=force_refresh_needed, analyze_data=deep_analysis if 'deep_analysis' in locals() else True)
+    print(f"[Pipeline Initialization] Pipeline initialized: {pipeline}") # DEBUG LOG
+else:
+    pipeline = None
+    st.session_state.current_db_connection = None
 
 # Track the current database connection to detect changes
 if 'previous_db_connection' not in st.session_state:
@@ -955,12 +1034,6 @@ def get_example_questions(schema_info_str, tables_str):
     except Exception as e:
         print(f"Error generating cached questions: {str(e)}")
         return default_questions
-
-# Track database connection changes
-if db_connection_changed:
-    print("Database connection changed, will regenerate questions")
-    # Force regeneration of questions on next run by setting a flag
-    st.session_state.force_regenerate_questions = True
 
 # Main interface
 st.header("Ask a Question")
@@ -1097,6 +1170,8 @@ def handle_query_submission():
     if st.session_state.query_input:
         st.session_state.submitted_query = st.session_state.query_input
         st.session_state.query_submitted = True
+        
+
 
 # Initialize session state for query submission
 if 'query_submitted' not in st.session_state:
@@ -1122,9 +1197,26 @@ if st.button("Ask") or st.session_state.query_submitted:
         st.session_state.submitted_query = ""
     
     if query_to_process:
+        # Check if we have a valid database connection
+        # Get the latest database engine from session state
+        db_engine = st.session_state.db_engine
+        print(f"[Query Processing] Using DB Engine from session state: {db_engine}") # DEBUG LOG
+        
+        # Reset any existing pipeline to ensure it uses the current database connection
+        reset_pipeline_on_db_change()
+        
+        if not db_engine:
+            st.error("No database connection established. Please connect to a database before asking questions.")
+            st.stop()
+            
         with st.spinner("Processing your question..."):
             # Start the pipeline with the user query
             try:
+                # Always create a fresh pipeline with the current database engine when processing a query
+                print(f"[Query Processing] Initializing pipeline with DB Engine: {db_engine}") # DEBUG LOG
+                pipeline = get_pipeline(db_engine, force_refresh=True, analyze_data=True)
+                print(f"[Query Processing] Pipeline initialized: {pipeline}") # DEBUG LOG
+                
                 # Force a schema refresh before processing the query
                 # This ensures the query uses the latest schema information
                 print("Refreshing schema before processing query...")
