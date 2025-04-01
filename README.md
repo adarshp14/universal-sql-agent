@@ -74,12 +74,24 @@ Output: "Alice Smith and Bob Johnson earn more than $50,000."
 
 ## How It Works
 
-1. The user connects to a database (sample, custom, URL, or saved profile)
-2. The SchemaParser agent automatically extracts database structure information
-3. The user submits a natural language query
-4. The QueryTranslator agent converts the natural language query to SQL
-5. The SQLExecutor agent runs the SQL query against the database
-6. Dynamic status banners provide feedback on each operation
+The application uses a multi-agent pipeline architecture to process user requests. Here's the typical flow:
+
+1. The user connects to a database (sample, custom, URL, or saved profile).
+2. The user submits a natural language query.
+3. The query, along with the database connection, enters the Agent Pipeline.
+4. **Agent Pipeline Flow:**
+
+   ```mermaid
+   graph TD
+       A[User Input: Natural Language Query + DB Connection] --> B(DynamicSchemaParser: Add Schema Info);
+       B --> C(QueryTranslator: Generate SQL Query);
+       C --> D(SQLExecutor: Execute SQL & Get Results);
+       D --> E(Responder: Format Results as Natural Language);
+       E --> F[Output: Natural Language Response];
+   ```
+
+5. Dynamic status banners provide feedback on each operation.
+6. The final natural language response is presented to the user.
 
 ## Database Profile Management
 
