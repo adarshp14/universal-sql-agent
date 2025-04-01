@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  universal-sql-agent:
+    build: .
+    container_name: universal-sql-agent
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./database:/app/database
+      - ./.env:/app/.env
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    restart: unless-stopped

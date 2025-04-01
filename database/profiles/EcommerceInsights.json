@@ -1,0 +1,8 @@
+{
+  "type": "postgresql",
+  "host": "localhost",
+  "port": "5433",
+  "database": "ecommerce_insights",
+  "username": "postgres",
+  "password": "Amity@2041"
+}
